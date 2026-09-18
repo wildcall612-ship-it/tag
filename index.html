@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>학교운동장 원형 술래잡기 대작전</title>
+    <!-- Tailwind CSS for modern UI overlays -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Jua&display=swap');
+        body {
+            font-family: 'Jua', sans-serif;
+            user-select: none;
+            overflow: hidden;
+            background-color: #1a2e1a;
+        }
+        .game-font { font-family: 'Jua', sans-serif; }
+    </style>
+</head>
+<body class="relative w-screen h-screen m-0 p-0 bg-emerald-900 overflow-hidden">
+
+    <!-- Main Game Canvas -->
+    <canvas id="gameCanvas" class="absolute top-0 left-0 w-full h-full block cursor-crosshair"></canvas>
+
+    <!-- HUD Overlay -->
+    <div id="hud" class="absolute top-0 left-0 w-full p-4 pointer-events-none flex justify-between items-start z-20">
+        <!-- Timer & Status -->
+        <div class="flex flex-col gap-2">
+            <div class="bg-white/90 backdrop-blur border-4 border-emerald-600 rounded-2xl px-6 py-2 shadow-xl flex items-center gap-4 pointer-events-auto">
+                <span class="text-2xl text-emerald-800">⏱️ 남은 시간:</span>
+                <span id="timerDisplay" class="text-3xl text-emerald-600 font-bold tracking-wider">02:00</span>
+            </div>
+            <div class="bg-white/90 backdrop-blur border-4 border-amber-600 rounded-2xl px-6 py-2 shadow-xl flex items-center gap-3 pointer-events-auto">
+                <span class="text-xl text-amber-800">💨 방귀 쿨타임:</span>
+                <div class="w-32 bg-gray-200 h-5 rounded-full overflow-hidden border-2 border-amber-500">
+                    <div id="fartCooldownBar" class="bg-amber-500 h-full w-full transition-all duration-100"></div>
+                </div>
+                <span id="fartStatusText" class="text-sm font-bold text-amber-700">준비됨!</span>
+            </div>
+        </div>
+
+        <!-- Minimap Container -->
+        <div class="bg-emerald-950/80 backdrop-blur border-4 border-emerald-500 rounded-2xl p-2 shadow-2xl pointer-events-auto flex flex-col items-center z-30">
+            <div class="text-xs text-emerald-200 mb-1">운동장 미니맵</div>
+            <canvas id="minimapCanvas" width="140" height="140" class="rounded-xl border-2 border-emerald-400 bg-emerald-900"></canvas>
+        </div>
+    </div>
+
+    <!-- Mobile Virtual Joystick Container (Left Side) -->
+    <div id="joystickZone" class="absolute bottom-10 left-8 w-40 h-40 rounded-full bg-black/40 border-4 border-white/50 backdrop-blur-md pointer-events-auto flex items-center justify-center z-30 shadow-2xl">
+        <div id="joystickKnob" class="absolute w-20 h-20 rounded-full bg-white/90 shadow-xl border-2 border-emerald-500 transform transition-transform duration-75"></div>
+    </div>
+
+    <!-- Mobile Action Buttons (Right Side) -->
+    <div class="absolute bottom-10 right-8 flex flex-col gap-3 pointer-events-auto z-30">
+        <button id="fartBtnMobile" class="px-8 py-6 bg-amber-500 hover:bg-amber-400 text-emerald-950 font-bold rounded-3xl shadow-2xl transition transform active:scale-95 border-b-6 border-amber-700 text-2xl flex items-center gap-2">
+            💨 방귀 뿡!
+        </button>
+    </div>
+
+    <!-- Game Over / Victory Modal -->
+    <div id="modalOverlay" class="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-3xl p-8 max-w-md w-full mx-4 shadow-2xl border-8 border-emerald-600 text-center transform transition-all scale-100">
+            <div id="modalEmoji" class="text-7xl mb-4 animate-bounce">🏆</div>
+            <h2 id="modalTitle" class="text-3xl font-bold text-emerald-800 mb-2">게임 승리!</h2>
+            <p id="modalDesc" class="text-gray-600 mb-6 text-lg">2분 동안 술래들을 따돌리고 살아남았습니다!</p>
+            <button onclick="restartGame()" class="w-full py-4 bg-emerald-500 hover:bg-emerald-600 text-white text-xl font-bold rounded-2xl shadow-lg transition transform active:scale-95 border-b-4 border-emerald-700">
+                다시 하기 🎮
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // Audio synthesis using Web Audio API for sound effects
+        class SoundFX {
+            constructor() {
+                this.ctx = null;
+            }
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+            }
+            playFart() {
+                this.init();
+                if (!this.ctx) return;
+                try {
+                    let osc = this.ctx.createOscillator();
+                    let gain = this.ctx.createGain();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(80, this.ctx.currentTime);
+                    osc.frequency.exponentialRampToValueAtTime(30, this.ctx.currentTime + 0.4);
+                    
+                    gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.4);
+                    
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start();
+                    osc.stop(this.ctx.currentTime + 0.4);
+                } catch(e) {}
+            }
+            playCatch() {
+                this.init();
+                if (!this.ctx) return;
+                try {
+                    let osc = this.ctx.createOscillator();
+                    let gain = this.ctx.createGain();
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(300, this.ctx.currentTime);
+                    osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.5);
+                    gain.gain.setValueAtTime(0.4, this.ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start();
+                    osc.stop(this.ctx.currentTime + 0.5);
+                } catch(e) {}
+            }
+            playWin() {
+                this.init();
+                if (!this.ctx) return;
+                try {
+                    let notes = [261.63, 329.63, 392.00, 523.25];
+                    notes.forEach((freq, idx) => {
+                        let osc = this.ctx.createOscillator();
+                        let gain = this.ctx.createGain();
+                        osc.type = 'triangle';
+                        osc.frequency.setValueAtTime(freq, this.ctx.currentTime + idx * 0.15);
+                        gain.gain.setValueAtTime(0.3, this.ctx.currentTime + idx * 0.15);
+                        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + idx * 0.15 + 0.3);
+                        osc.connect(gain);
+                        gain.connect(this.ctx.destination);
+                        osc.start(this.ctx.currentTime + idx * 0.15);
+                        osc.stop(this.ctx.currentTime + idx * 0.15 + 0.3);
+                    });
+                } catch(e) {}
+            }
+        }
+
+        const sfx = new SoundFX();
+
+        // Canvas & Context Setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const minimapCanvas = document.getElementById('minimapCanvas');
+        const minimapCtx = minimapCanvas.getContext('2d');
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        const WORLD_RADIUS = 12500; 
+        let gameState = 'PLAYING';
+        let gameTime = 120;
+        let timerInterval = null;
+
+        let player = {
+            x: 0,
+            y: 0,
+            radius: 24,
+            speed: 4.8,
+            color: '#3b82f6',
+            name: '나 (주인공)',
+            angle: 0
+        };
+
+        let taggers = [
+            { x: 1500, y: 1500, radius: 26, speed: 4.3, color: '#ef4444', name: '멋쟁이' },
+            { x: -1500, y: 1500, radius: 26, speed: 4.3, color: '#ec4899', name: '사랑이' },
+            { x: 1500, y: -1500, radius: 26, speed: 4.3, color: '#8b5cf6', name: '건강이' },
+            { x: -1500, y: -1500, radius: 26, speed: 4.3, color: '#f59e0b', name: '이뿌니' }
+        ];
+
+        let obstacles = [];
+        function generateObstacles() {
+            obstacles = [];
+            for (let i = 0; i < 150; i++) {
+                let angle = Math.random() * Math.PI * 2;
+                let dist = Math.random() * (WORLD_RADIUS - 600) + 300;
+                obstacles.push({
+                    type: 'tree',
+                    x: Math.cos(angle) * dist,
+                    y: Math.sin(angle) * dist,
+                    radius: 90
+                });
+            }
+            for (let i = 0; i < 100; i++) {
+                let angle = Math.random() * Math.PI * 2;
+                let dist = Math.random() * (WORLD_RADIUS - 600) + 200;
+                obstacles.push({
+                    type: 'bench',
+                    x: Math.cos(angle) * dist,
+                    y: Math.sin(angle) * dist,
+                    width: 120,
+                    height: 60,
+                    radius: 70
+                });
+            }
+            for (let i = 0; i < 40; i++) {
+                let angle = Math.random() * Math.PI * 2;
+                let dist = Math.random() * (WORLD_RADIUS - 800) + 400;
+                obstacles.push({
+                    type: 'sandpit',
+                    x: Math.cos(angle) * dist,
+                    y: Math.sin(angle) * dist,
+                    radius: 180
+                });
+            }
+        }
+        generateObstacles();
+
+        let fartClouds = [];
+        let fartCooldown = 0; 
+        const FART_COOLDOWN_MAX = 300;
+        const FART_DURATION = 120;
+
+        // Mobile Virtual Joystick State
+        let joystickActive = false;
+        let joystickCenter = { x: 0, y: 0 };
+        let joystickVector = { x: 0, y: 0 };
+
+        const joystickZone = document.getElementById('joystickZone');
+        const joystickKnob = document.getElementById('joystickKnob');
+
+        joystickZone.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            joystickActive = true;
+            let rect = joystickZone.getBoundingClientRect();
+            joystickCenter.x = rect.left + rect.width / 2;
+            joystickCenter.y = rect.top + rect.height / 2;
+            handleTouchMove(e.touches[0]);
+        }, { passive: false });
+
+        window.addEventListener('touchmove', (e) => {
+            if (!joystickActive) return;
+            e.preventDefault();
+            for (let i = 0; i < e.touches.length; i++) {
+                let touch = e.touches[i];
+                let rect = joystickZone.getBoundingClientRect();
+                if (touch.clientX >= rect.left - 60 && touch.clientX <= rect.right + 60 &&
+                    touch.clientY >= rect.top - 60 && touch.clientY <= rect.bottom + 60) {
+                    handleTouchMove(touch);
+                    break;
+                }
+            }
+        }, { passive: false });
+
+        window.addEventListener('touchend', (e) => {
+            joystickActive = false;
+            joystickVector = { x: 0, y: 0 };
+            joystickKnob.style.transform = `translate(0px, 0px)`;
+        });
+
+        function handleTouchMove(touch) {
+            let dx = touch.clientX - joystickCenter.x;
+            let dy = touch.clientY - joystickCenter.y;
+            let dist = Math.hypot(dx, dy);
+            let maxRadius = 50;
+
+            if (dist > maxRadius) {
+                dx = (dx / dist) * maxRadius;
+                dy = (dy / dist) * maxRadius;
+            }
+
+            joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+            
+            let normDist = Math.hypot(dx, dy);
+            if (normDist > 0) {
+                joystickVector.x = dx / maxRadius;
+                joystickVector.y = dy / maxRadius;
+            } else {
+                joystickVector.x = 0;
+                joystickVector.y = 0;
+            }
+        }
+
+        document.getElementById('fartBtnMobile').addEventListener('click', () => {
+            triggerFart();
+        });
+
+        function triggerFart() {
+            if (gameState !== 'PLAYING') return;
+            if (fartCooldown <= 0) {
+                sfx.playFart();
+                fartClouds.push({
+                    x: player.x,
+                    y: player.y,
+                    radius: 120,
+                    timer: FART_DURATION,
+                    maxTimer: FART_DURATION
+                });
+                fartCooldown = FART_COOLDOWN_MAX;
+            }
+        }
+
+        let camera = { x: 0, y: 0 };
+
+        function startTimer() {
+            gameTime = 120;
+            if (timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                if (gameState === 'PLAYING') {
+                    gameTime--;
+                    let mins = Math.floor(gameTime / 60);
+                    let secs = gameTime % 60;
+                    document.getElementById('timerDisplay').innerText = 
+                        `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                    
+                    if (gameTime <= 0) {
+                        endGame(true);
+                    }
+                }
+            }, 1000);
+        }
+        startTimer();
+
+        function update() {
+            if (gameState !== 'PLAYING') return;
+
+            if (fartCooldown > 0) {
+                fartCooldown--;
+                let percent = (1 - fartCooldown / FART_COOLDOWN_MAX) * 100;
+                document.getElementById('fartCooldownBar').style.width = percent + '%';
+                if (fartCooldown <= 0) {
+                    document.getElementById('fartStatusText').innerText = '준비됨!';
+                    document.getElementById('fartStatusText').className = 'text-sm font-bold text-emerald-700';
+                } else {
+                    document.getElementById('fartStatusText').innerText = `${(fartCooldown/60).toFixed(1)}초`;
+                    document.getElementById('fartStatusText').className = 'text-sm font-bold text-amber-700';
+                }
+            }
+
+            for (let i = fartClouds.length - 1; i >= 0; i--) {
+                fartClouds[i].timer--;
+                if (fartClouds[i].timer <= 0) {
+                    fartClouds.splice(i, 1);
+                }
+            }
+
+            // Player movement via virtual joystick
+            let dx = joystickVector.x;
+            let dy = joystickVector.y;
+
+            if (dx !== 0 || dy !== 0) {
+                let nextX = player.x + dx * player.speed;
+                let nextY = player.y + dy * player.speed;
+
+                let distFromCenter = Math.hypot(nextX, nextY);
+                if (distFromCenter < WORLD_RADIUS - player.radius) {
+                    let collided = false;
+                    for (let obs of obstacles) {
+                        if (obs.type === 'tree' || obs.type === 'sandpit') {
+                            if (Math.hypot(nextX - obs.x, nextY - obs.y) < player.radius + obs.radius) {
+                                collided = true;
+                                break;
+                            }
+                        } else if (obs.type === 'bench') {
+                            if (Math.abs(nextX - obs.x) < obs.width/2 + player.radius &&
+                                Math.abs(nextY - obs.y) < obs.height/2 + player.radius) {
+                                collided = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!collided) {
+                        player.x = nextX;
+                        player.y = nextY;
+                        player.angle = Math.atan2(dy, dx);
+                    }
+                }
+            }
+
+            // Taggers AI
+            for (let tagger of taggers) {
+                let isStunned = false;
+                for (let cloud of fartClouds) {
+                    if (Math.hypot(tagger.x - cloud.x, tagger.y - cloud.y) < cloud.radius + tagger.radius) {
+                        isStunned = true;
+                        break;
+                    }
+                }
+
+                if (isStunned) continue;
+
+                let angleToPlayer = Math.atan2(player.y - tagger.y, player.x - tagger.x);
+                let tdx = Math.cos(angleToPlayer);
+                let tdy = Math.sin(angleToPlayer);
+
+                let nextTX = tagger.x + tdx * tagger.speed;
+                let nextTY = tagger.y + tdy * tagger.speed;
+
+                let collided = false;
+                for (let obs of obstacles) {
+                    if (obs.type === 'tree' || obs.type === 'sandpit') {
+                        if (Math.hypot(nextTX - obs.x, nextTY - obs.y) < tagger.radius + obs.radius) {
+                            collided = true;
+                            break;
+                        }
+                    } else if (obs.type === 'bench') {
+                        if (Math.abs(nextTX - obs.x) < obs.width/2 + tagger.radius &&
+                            Math.abs(nextTY - obs.y) < obs.height/2 + tagger.radius) {
+                            collided = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!collided) {
+                    tagger.x = nextTX;
+                    tagger.y = nextTY;
+                } else {
+                    tagger.x += Math.cos(angleToPlayer + Math.PI/2) * tagger.speed * 0.8;
+                    tagger.y += Math.sin(angleToPlayer + Math.PI/2) * tagger.speed * 0.8;
+                }
+
+                if (Math.hypot(player.x - tagger.x, player.y - tagger.y) < player.radius + tagger.radius) {
+                    sfx.playCatch();
+                    endGame(false);
+                }
+            }
+
+            camera.x = player.x - canvas.width / 2;
+            camera.y = player.y - canvas.height / 2;
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.save();
+            ctx.translate(-camera.x, -camera.y);
+
+            // Playground background
+            ctx.fillStyle = '#22c55e';
+            ctx.beginPath();
+            ctx.arc(0, 0, WORLD_RADIUS, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.lineWidth = 30;
+            ctx.strokeStyle = '#15803d';
+            ctx.stroke();
+
+            for (let r = 2500; r < WORLD_RADIUS; r += 2500) {
+                ctx.beginPath();
+                ctx.arc(0, 0, r, 0, Math.PI * 2);
+                ctx.lineWidth = 8;
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+                ctx.stroke();
+            }
+
+            ctx.beginPath();
+            ctx.arc(0, 0, 400, 0, Math.PI * 2);
+            ctx.lineWidth = 10;
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.stroke();
+
+            // Obstacles
+            for (let obs of obstacles) {
+                if (obs.type === 'tree') {
+                    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+                    ctx.beginPath();
+                    ctx.arc(obs.x + 15, obs.y + 15, obs.radius, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = '#854d0e';
+                    ctx.beginPath();
+                    ctx.arc(obs.x, obs.y, 25, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = '#166534';
+                    ctx.beginPath();
+                    ctx.arc(obs.x, obs.y, obs.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (obs.type === 'bench') {
+                    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+                    ctx.fillRect(obs.x - obs.width/2 + 8, obs.y - obs.height/2 + 8, obs.width, obs.height);
+
+                    ctx.fillStyle = '#a16207';
+                    ctx.roundRect(obs.x - obs.width/2, obs.y - obs.height/2, obs.width, obs.height, 12);
+                    ctx.fill();
+                    ctx.strokeStyle = '#713f12';
+                    ctx.lineWidth = 5;
+                    ctx.stroke();
+                } else if (obs.type === 'sandpit') {
+                    ctx.fillStyle = '#fde047';
+                    ctx.beginPath();
+                    ctx.arc(obs.x, obs.y, obs.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#ca8a04';
+                    ctx.lineWidth = 10;
+                    ctx.stroke();
+                }
+            }
+
+            // Fart clouds
+            for (let cloud of fartClouds) {
+                let alpha = cloud.timer / cloud.maxTimer;
+                ctx.fillStyle = `rgba(168, 85, 247, ${alpha * 0.5})`;
+                ctx.beginPath();
+                ctx.arc(cloud.x, cloud.y, cloud.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = `rgba(147, 51, 234, ${alpha * 0.8})`;
+                ctx.lineWidth = 6;
+                ctx.stroke();
+
+                ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.8})`;
+                ctx.font = '32px Jua';
+                ctx.fillText('💨 뿌우웅~', cloud.x - 50, cloud.y);
+            }
+
+            // Taggers
+            for (let tagger of taggers) {
+                let isStunned = false;
+                for (let cloud of fartClouds) {
+                    if (Math.hypot(tagger.x - cloud.x, tagger.y - cloud.y) < cloud.radius + tagger.radius) {
+                        isStunned = true;
+                        break;
+                    }
+                }
+
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                ctx.beginPath();
+                ctx.arc(tagger.x, tagger.y + 8, tagger.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = tagger.color;
+                ctx.beginPath();
+                ctx.arc(tagger.x, tagger.y, tagger.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = '#ffffff';
+                ctx.stroke();
+
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(tagger.x - 8, tagger.y - 5, 5, 0, Math.PI * 2);
+                ctx.arc(tagger.x + 8, tagger.y - 5, 5, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#000000';
+                ctx.font = '16px Jua';
+                ctx.textAlign = 'center';
+                ctx.fillText(tagger.name, tagger.x, tagger.y - 35);
+
+                if (isStunned) {
+                    ctx.fillStyle = '#ef4444';
+                    ctx.font = '20px Jua';
+                    ctx.fillText('😵 기절중!', tagger.x, tagger.y - 55);
+                }
+            }
+
+            // Player
+            ctx.fillStyle = 'rgba(0,0,0,0.2)';
+            ctx.beginPath();
+            ctx.arc(player.x, player.y + 8, player.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = player.color;
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#ffffff';
+            ctx.stroke();
+
+            ctx.fillStyle = '#ffffff';
+            let eyeX = player.x + Math.cos(player.angle) * 8;
+            let eyeY = player.y + Math.sin(player.angle) * 8;
+            ctx.beginPath();
+            ctx.arc(eyeX, eyeY, 7, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#1e3a8a';
+            ctx.font = 'bold 18px Jua';
+            ctx.textAlign = 'center';
+            ctx.fillText(player.name, player.x, player.y - 35);
+
+            ctx.restore();
+
+            drawMinimap();
+        }
+
+        function drawMinimap() {
+            minimapCtx.clearRect(0, 0, minimapCanvas.width, minimapCanvas.height);
+            let scale = minimapCanvas.width / (WORLD_RADIUS * 2);
+            let mCenterX = minimapCanvas.width / 2;
+            let mCenterY = minimapCanvas.height / 2;
+
+            minimapCtx.strokeStyle = '#34d399';
+            minimapCtx.lineWidth = 2;
+            minimapCtx.beginPath();
+            minimapCtx.arc(mCenterX, mCenterY, WORLD_RADIUS * scale, 0, Math.PI * 2);
+            minimapCtx.stroke();
+
+            minimapCtx.fillStyle = '#14532d';
+            for (let obs of obstacles) {
+                if (obs.type === 'tree') {
+                    minimapCtx.beginPath();
+                    minimapCtx.arc(mCenterX + obs.x * scale, mCenterY + obs.y * scale, 2, 0, Math.PI * 2);
+                    minimapCtx.fill();
+                }
+            }
+
+            minimapCtx.fillStyle = '#3b82f6';
+            minimapCtx.beginPath();
+            minimapCtx.arc(mCenterX + player.x * scale, mCenterY + player.y * scale, 3.5, 0, Math.PI * 2);
+            minimapCtx.fill();
+
+            for (let tagger of taggers) {
+                minimapCtx.fillStyle = tagger.color;
+                minimapCtx.beginPath();
+                minimapCtx.arc(mCenterX + tagger.x * scale, mCenterY + tagger.y * scale, 3.5, 0, Math.PI * 2);
+                minimapCtx.fill();
+            }
+        }
+
+        function endGame(isVictory) {
+            gameState = isVictory ? 'VICTORY' : 'GAMEOVER';
+            if (timerInterval) clearInterval(timerInterval);
+
+            const modal = document.getElementById('modalOverlay');
+            const emoji = document.getElementById('modalEmoji');
+            const title = document.getElementById('modalTitle');
+            const desc = document.getElementById('modalDesc');
+
+            if (isVictory) {
+                sfx.playWin();
+                emoji.innerText = '🏆';
+                title.innerText = '게임 승리!';
+                title.className = 'text-3xl font-bold text-emerald-800 mb-2';
+                desc.innerText = '멋쟁이, 사랑이, 건강이, 이뿌니를 따돌리고 2분 동안 살아남았습니다!';
+            } else {
+                emoji.innerText = '😭';
+                title.innerText = '게임 오버!';
+                title.className = 'text-3xl font-bold text-red-600 mb-2';
+                desc.innerText = '술래에게 잡히고 말았어요! 다시 도전해보세요.';
+            }
+
+            modal.classList.remove('hidden');
+        }
+
+        function restartGame() {
+            player.x = 0;
+            player.y = 0;
+            
+            taggers[0] = { x: 1500, y: 1500, radius: 26, speed: 4.3, color: '#ef4444', name: '멋쟁이' };
+            taggers[1] = { x: -1500, y: 1500, radius: 26, speed: 4.3, color: '#ec4899', name: '사랑이' };
+            taggers[2] = { x: 1500, y: -1500, radius: 26, speed: 4.3, color: '#8b5cf6', name: '건강이' };
+            taggers[3] = { x: -1500, y: -1500, radius: 26, speed: 4.3, color: '#f59e0b', name: '이뿌니' };
+
+            fartClouds = [];
+            fartCooldown = 0;
+            generateObstacles();
+
+            document.getElementById('modalOverlay').classList.add('hidden');
+            gameState = 'PLAYING';
+            startTimer();
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        window.onload = function() {
+            gameLoop();
+        };
+    </script>
+</body>
+</html>
